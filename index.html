@@ -82,7 +82,7 @@ h3{font-size:17px;font-weight:500;margin:0 0 10px}
 .confetti{position:fixed;inset:0;pointer-events:none;overflow:hidden;z-index:8}
 .confetti i{position:absolute;top:-20px;width:10px;height:14px;border-radius:3px;animation:fall 1.8s ease-in forwards}
 @keyframes fall{to{transform:translateY(110vh) rotate(540deg)}}
-video#pipv{position:fixed;width:2px;height:2px;opacity:0;pointer-events:none;bottom:0;right:0}
+video#pipv{width:132px;height:88px;border-radius:14px;border:2px solid var(--line);background:#FFF8EE;object-fit:cover}
 </style>
 </head>
 <body>
@@ -123,6 +123,7 @@ video#pipv{position:fixed;width:2px;height:2px;opacity:0;pointer-events:none;bot
       <div id="runBox" class="controls hidden">
         <button class="ghost" id="btnStop">พอแค่นี้ก่อน</button>
         <button class="ghost" id="btnPip">ให้สไลม์ลอยตาม</button>
+        <video id="pipv" playsinline muted autoplay aria-label="ตัวอย่างหน้าต่างลอย"></video>
       </div>
 
       <!-- after focus -->
@@ -168,7 +169,6 @@ video#pipv{position:fixed;width:2px;height:2px;opacity:0;pointer-events:none;bot
 </div>
 <div class="toast" id="toast"></div>
 <div class="confetti" id="confetti"></div>
-<video id="pipv" playsinline muted></video>
 <canvas id="pipc" width="360" height="240" style="display:none"></canvas>
 
 <script>
@@ -241,7 +241,7 @@ function confetti(){const box=$('confetti');const cols=['#7FD8B6','#F49AB8','#FF
 let wakeLock=null;
 async function keepAwake(on){try{if(on&&'wakeLock' in navigator){wakeLock=await navigator.wakeLock.request('screen')}else if(!on&&wakeLock){await wakeLock.release();wakeLock=null}}catch(e){}}
 function startFocus(min,tiny){
-  ensureAudio();
+  ensureAudio();preparePip();
   R={mode:'focus',start:Date.now(),end:Date.now()+min*60000,plan:min,tiny:!!tiny,task:$('task').value.trim()};
   S.lastActive=Date.now();save();keepAwake(true);say(tiny?'แค่ 2 นาทีเอง ทำได้แน่นอน!':pick(MSG.focus));render();
 }
@@ -264,7 +264,7 @@ function endFocus(completed){
   else{R={mode:'idle'};say(pick(MSG.stop))}
   keepAwake(false);save();render();
 }
-function startBreak(){ensureAudio();R={mode:'break',start:Date.now(),end:Date.now()+BREAK_MIN*60000,plan:BREAK_MIN};save();say(pick(MSG.brk));render()}
+function startBreak(){ensureAudio();preparePip();R={mode:'break',start:Date.now(),end:Date.now()+BREAK_MIN*60000,plan:BREAK_MIN};save();say(pick(MSG.brk));render()}
 function breakOver(){R={mode:'back',at:Date.now()};chime('back');say(pick(MSG.back));save();render()}
 function backToFocus(){
   if(R.mode==='back'&&Date.now()-R.at<=GRACE_MS)addXP(3,'กลับมาตรงเวลา');
@@ -348,20 +348,28 @@ function drawPip(){
   ctx.fillText(txt,280,120);
   ctx.font='20px Mitr, sans-serif';ctx.fillStyle='#7A7685';ctx.fillText(R.mode==='break'?'พัก':'โฟกัส',280,152);
 }
-async function togglePip(){
+function preparePip(){
   try{
-    if(document.pictureInPictureElement){await document.exitPictureInPicture();return}
-    if(!pipc.captureStream)throw new Error('no captureStream');
+    if(!pipc.captureStream)return;
     pipOn=true;drawPip();
     if(!pv.srcObject)pv.srcObject=pipc.captureStream(10);
-    await pv.play();
-    if(pv.requestPictureInPicture){await pv.requestPictureInPicture()}
-    else if(pv.webkitSetPresentationMode){pv.webkitSetPresentationMode('picture-in-picture')}
-    else throw new Error('no pip');
-    toast('สไลม์ลอยแล้ว ลองสลับไปแอปอื่นดู');
-  }catch(e){pipOn=false;toast('เครื่องนี้ยังให้สไลม์ลอยไม่ได้ ('+(e.message||e)+')')}
+    const p=pv.play();if(p&&p.catch)p.catch(()=>{});
+  }catch(e){}
 }
-pv.addEventListener('leavepictureinpicture',()=>{pipOn=false});
+function togglePip(){
+  /* must call PiP synchronously inside the tap - no await before it */
+  try{
+    if(document.pictureInPictureElement){document.exitPictureInPicture();return}
+    if(pv.webkitPresentationMode==='picture-in-picture'){pv.webkitSetPresentationMode('inline');return}
+    if(!pv.srcObject||pv.readyState<1){preparePip();toast('กำลังเตรียมหน้าต่างลอย ลองกดอีกครั้งนะ');return}
+    if(pv.webkitSupportsPresentationMode&&pv.webkitSupportsPresentationMode('picture-in-picture')){
+      pv.webkitSetPresentationMode('picture-in-picture');toast('สไลม์ลอยแล้ว ลองสลับไปแอปอื่นดู');return}
+    if(pv.requestPictureInPicture){
+      pv.requestPictureInPicture().then(()=>toast('สไลม์ลอยแล้ว ลองสลับไปแอปอื่นดู')).catch(e=>toast('เครื่องนี้ยังให้สไลม์ลอยไม่ได้ ('+(e.message||e)+')'));return}
+    toast('เครื่องนี้ยังให้สไลม์ลอยไม่ได้');
+  }catch(e){toast('เครื่องนี้ยังให้สไลม์ลอยไม่ได้ ('+(e.message||e)+')')}
+}
+
 
 /* ---------- events ---------- */
 $('btnStart').onclick=()=>startFocus(S.focusLen,false);
@@ -381,6 +389,7 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden){tick();if
 if(R.mode==='focus'&&Date.now()>=R.end){endFocus(true)}
 else if(R.mode==='break'&&Date.now()>=R.end){breakOver()}
 else{ if(moodNow()==='sleepy')say(pick(MSG.sleepy)); render(); if(R.mode==='focus')say(pick(MSG.focus)); }
+if(R.mode==='focus'||R.mode==='break')preparePip();
 setInterval(tick,250);
 })();
 </script>
