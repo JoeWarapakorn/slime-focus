@@ -169,7 +169,6 @@ video#pipv{width:132px;height:88px;border-radius:14px;border:2px solid var(--lin
 </div>
 <div class="toast" id="toast"></div>
 <div class="confetti" id="confetti"></div>
-<canvas id="pipc" width="360" height="240" style="display:none"></canvas>
 
 <script>
 (function(){
@@ -334,34 +333,33 @@ function drawChart(){
     <text x="${x+bw/2}" y="138" font-size="12" text-anchor="middle" fill="${d.today?'#1E8C69':'#7A7685'}" font-family="Mitr">${d.n}</text>`}).join('');
 }
 
-/* ---------- Picture-in-Picture experiment ---------- */
-const pipc=$('pipc'),pv=$('pipv');let pipOn=false,pipImg=null,pipImgKey='';
-function drawPip(){
-  if(!pipOn)return;
-  const ctx=pipc.getContext('2d');
-  const k=moodNow()+stageIdx();
-  if(k!==pipImgKey){pipImgKey=k;const img=new Image();img.onload=()=>{pipImg=img};img.src=STAGE_IMG[stageIdx()]}
-  ctx.fillStyle='#FFF8EE';ctx.fillRect(0,0,360,240);
-  if(pipImg){const b=Math.sin(Date.now()/300)*4,sz=190*(.7+.3*STAGE_SCALE[stageIdx()]);ctx.drawImage(pipImg,105-sz/2,225-sz+b,sz,sz)}
-  ctx.fillStyle='#2B2A33';ctx.font='600 46px Mitr, sans-serif';ctx.textAlign='center';
-  const txt=(R.mode==='focus'||R.mode==='break')?fmt(R.end-Date.now()):'--:--';
-  ctx.fillText(txt,280,120);
-  ctx.font='20px Mitr, sans-serif';ctx.fillStyle='#7A7685';ctx.fillText(R.mode==='break'?'พัก':'โฟกัส',280,152);
+/* ---------- Picture-in-Picture (real video files: 25-min countdown per stage) ---------- */
+const pv=$('pipv');const PIP_TOTAL=1500;
+pv.addEventListener('error',()=>{if(pv.src&&!pv.src.endsWith('pip-1.mp4')){pv.src='pip-1.mp4';pv.load();pv.addEventListener('loadedmetadata',()=>syncPip(true),{once:true})}});
+function remainingSec(){return (R.mode==='focus'||R.mode==='break')?Math.max(0,Math.ceil((R.end-Date.now())/1000)):0}
+function syncPip(force){
+  if(!pv.src||pv.readyState<1)return;
+  const want=Math.min(PIP_TOTAL,Math.max(0,PIP_TOTAL-remainingSec()));
+  if(force||Math.abs(pv.currentTime-want)>2){try{pv.currentTime=want}catch(e){}}
+  if(R.mode==='focus'||R.mode==='break'){if(pv.paused){const p=pv.play();if(p&&p.catch)p.catch(()=>{})}}
+  else if(!pv.paused)pv.pause();
 }
+function drawPip(){ if(!document.hidden)syncPip(false) }
 function preparePip(){
   try{
-    if(!pipc.captureStream)return;
-    pipOn=true;drawPip();
-    if(!pv.srcObject)pv.srcObject=pipc.captureStream(10);
+    const want='pip-'+(stageIdx()+1)+'.mp4';
+    if(!pv.src||!pv.src.endsWith(want)){pv.src=want;pv.load()}
+    pv.addEventListener('loadedmetadata',()=>syncPip(true),{once:true});
     const p=pv.play();if(p&&p.catch)p.catch(()=>{});
   }catch(e){}
 }
 function togglePip(){
-  /* must call PiP synchronously inside the tap - no await before it */
+  /* PiP must be requested synchronously inside the tap */
   try{
     if(document.pictureInPictureElement){document.exitPictureInPicture();return}
     if(pv.webkitPresentationMode==='picture-in-picture'){pv.webkitSetPresentationMode('inline');return}
-    if(!pv.srcObject||pv.readyState<1){preparePip();toast('กำลังเตรียมหน้าต่างลอย ลองกดอีกครั้งนะ');return}
+    if(!pv.src||pv.readyState<1){preparePip();toast('กำลังโหลดหน้าต่างลอย รอสักครู่แล้วกดอีกครั้งนะ');return}
+    syncPip(true);
     if(pv.webkitSupportsPresentationMode&&pv.webkitSupportsPresentationMode('picture-in-picture')){
       pv.webkitSetPresentationMode('picture-in-picture');toast('สไลม์ลอยแล้ว ลองสลับไปแอปอื่นดู');return}
     if(pv.requestPictureInPicture){
@@ -369,7 +367,7 @@ function togglePip(){
     toast('เครื่องนี้ยังให้สไลม์ลอยไม่ได้');
   }catch(e){toast('เครื่องนี้ยังให้สไลม์ลอยไม่ได้ ('+(e.message||e)+')')}
 }
-
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncPip(true)});
 
 /* ---------- events ---------- */
 $('btnStart').onclick=()=>startFocus(S.focusLen,false);
