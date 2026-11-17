@@ -122,6 +122,7 @@ video#pipv{width:132px;height:88px;border-radius:14px;border:2px solid var(--lin
       <!-- running -->
       <div id="runBox" class="controls hidden">
         <button class="ghost" id="btnStop">พอแค่นี้ก่อน</button>
+        <button class="warm" id="btnPause">หยุดชั่วคราว</button>
         <button class="ghost" id="btnPip">ให้สไลม์ลอยตาม</button>
         <video id="pipv" playsinline muted autoplay aria-label="ตัวอย่างหน้าต่างลอย"></video>
       </div>
@@ -216,6 +217,7 @@ function minutesOn(k){return S.sessions.filter(s=>s.d===k).reduce((a,s)=>a+s.m,0
 function streak(){let n=0;const d=new Date();if(minutesOn(dayKey(d))===0)d.setDate(d.getDate()-1);while(minutesOn(dayKey(d))>0){n++;d.setDate(d.getDate()-1)}return n}
 function addXP(n,why){if(n<=0)return;const before=stageIdx();S.xp+=n;toast(`+${n} XP · ${why}`);if(stageIdx()>before){setTimeout(()=>{say(`ว้าว! ฉันวิวัฒนาการเป็น ${STAGES[stageIdx()].n} แล้ว!`);confetti();chime('done')},900)}}
 function moodNow(){
+  if(R.paused)return'idle';
   if(R.mode==='focus'||R.mode==='flow')return'focus';
   if(R.mode==='break')return'break';
   if(R.mode==='done')return'happy';
@@ -239,6 +241,14 @@ let toastT;function toast(t){const el=$('toast');el.textContent=t;el.classList.a
 function confetti(){const box=$('confetti');const cols=['#7FD8B6','#F49AB8','#FFC860','#8E85E6','#9FD46A'];for(let i=0;i<40;i++){const e=document.createElement('i');e.style.left=Math.random()*100+'vw';e.style.background=cols[i%cols.length];e.style.animationDelay=(Math.random()*.5)+'s';box.appendChild(e);setTimeout(()=>e.remove(),2600)}}
 
 /* ---------- timer ---------- */
+function nowT(){return R.paused||Date.now()}
+function togglePause(){
+  if(!(R.mode==='focus'||R.mode==='break'||R.mode==='flow'))return;
+  if(R.paused){const d=Date.now()-R.paused;R.start+=d;if(R.end)R.end+=d;delete R.paused;say('กลับมาแล้ว ไปต่อกัน!');keepAwake(true)}
+  else{R.paused=Date.now();say('ไปเถอะ ฉันรออยู่ตรงนี้นะ');keepAwake(false)}
+  save();render();syncPip(true);
+}
+function unpauseSilently(){if(R.paused){const d=Date.now()-R.paused;R.start+=d;if(R.end)R.end+=d;delete R.paused}}
 let wakeLock=null;
 async function keepAwake(on){try{if(on&&'wakeLock' in navigator){wakeLock=await navigator.wakeLock.request('screen')}else if(!on&&wakeLock){await wakeLock.release();wakeLock=null}}catch(e){}}
 function startFocus(min,tiny){
@@ -293,6 +303,10 @@ function fmtUp(ms){const s=Math.floor(Math.max(0,ms)/1000);return '+'+String(Mat
 function fmt(ms){ms=Math.max(0,ms);const s=Math.ceil(ms/1000);return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
 let lastBubble=0;
 function tick(){
+  if(R.paused){
+    if(R.mode==='flow'){const el=R.paused-R.start;$('time').textContent=fmtUp(el);$('ring').setAttribute('stroke-dashoffset',String(603.19*(1-Math.min(1,el/(FLOW_CAP*60000)))))}
+    else{const left=R.end-R.paused;$('time').textContent=fmt(left);$('ring').setAttribute('stroke-dashoffset',String(603.19*(1-Math.max(0,left)/(R.plan*60000))))}
+    drawPip();return}
   if(R.mode==='focus'||R.mode==='break'){
     const left=R.end-Date.now(),total=R.plan*60000;
     $('time').textContent=fmt(left);
@@ -324,7 +338,10 @@ function render(){
   $('btnBreak').classList.toggle('hidden',m==='done'&&R.tiny);
   $('ringWrap').style.display=running?'block':'none';
   $('slime').style.setProperty('height',running?'210px':'',running?'important':'');
-  $('modeLabel').textContent=m==='focus'?(R.task||'โฟกัส'):m==='flow'?'ติดลม XP x2':'พัก';
+  $('modeLabel').textContent=R.paused?'หยุดชั่วคราว':m==='focus'?(R.task||'โฟกัส'):m==='flow'?'ติดลม XP x2':'พัก';
+  $('btnPause').textContent=R.paused?'ไปต่อ':'หยุดชั่วคราว';
+  $('btnPause').className=R.paused?'primary':'warm';
+  $('ringWrap').style.opacity=R.paused?'.45':'1';
   $('ring').setAttribute('stroke',m==='break'?'#FFC860':m==='flow'?'#F49AB8':'#7FD8B6');
   $('btnStop').textContent=m==='break'?'กลับมาโฟกัสเลย':m==='flow'?'พอแล้ว':'พอแค่นี้ก่อน';
   $('btnStart').textContent=`เริ่มโฟกัส ${S.focusLen} นาที`;
@@ -361,14 +378,17 @@ function drawChart(){
 }
 
 /* ---------- Picture-in-Picture (real video files: 25-min countdown per stage) ---------- */
-const pv=$('pipv');const PIP_TOTAL=1500;
+const pv=$('pipv');const PIP_TOTAL=1500,PIP_UP=1200;
 pv.addEventListener('error',()=>{if(pv.src&&!pv.src.endsWith('pip-1.mp4')){pv.src='pip-1.mp4';pv.load();pv.addEventListener('loadedmetadata',()=>syncPip(true),{once:true})}});
-function remainingSec(){return (R.mode==='focus'||R.mode==='break')?Math.max(0,Math.ceil((R.end-Date.now())/1000)):0}
+function remainingSec(){return (R.mode==='focus'||R.mode==='break')?Math.max(0,Math.ceil((R.end-nowT())/1000)):0}
 function syncPip(force){
   if(!pv.src||pv.readyState<1)return;
-  const want=Math.min(PIP_TOTAL,Math.max(0,PIP_TOTAL-remainingSec()));
+  const flow=R.mode==='flow';
+  const up=flow?Math.floor((nowT()-R.start)/1000):0;
+  const want=flow?PIP_TOTAL+Math.min(PIP_UP,up):Math.min(PIP_TOTAL,Math.max(0,PIP_TOTAL-remainingSec()));
   if(force||Math.abs(pv.currentTime-want)>2){try{pv.currentTime=want}catch(e){}}
-  if(R.mode==='focus'||R.mode==='break'){if(pv.paused){const p=pv.play();if(p&&p.catch)p.catch(()=>{})}}
+  const live=!R.paused&&(R.mode==='focus'||R.mode==='break'||(flow&&up<PIP_UP));
+  if(live){if(pv.paused){const p=pv.play();if(p&&p.catch)p.catch(()=>{})}}
   else if(!pv.paused)pv.pause();
 }
 function drawPip(){ if(!document.hidden)syncPip(false) }
@@ -399,12 +419,13 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden)syncPip(tr
 /* ---------- events ---------- */
 $('btnStart').onclick=()=>startFocus(S.focusLen,false);
 $('btnTiny').onclick=()=>startFocus(2,true);
-$('btnStop').onclick=()=>{if(R.mode==='flow'){endFlow();return}if(R.mode==='break'){addXP(3,'กลับมาก่อนเวลา');R={mode:'idle'};save();startFocus(S.focusLen,false)}else endFocus(false)};
+$('btnStop').onclick=()=>{unpauseSilently();if(R.mode==='flow'){endFlow();return}if(R.mode==='break'){addXP(3,'กลับมาก่อนเวลา');R={mode:'idle'};save();startFocus(S.focusLen,false)}else endFocus(false)};
 $('btnBreak').onclick=startBreak;
 $('btnContinue').onclick=()=>{R={mode:'idle'};startFocus(S.focusLen,false)};
 $('btnFinish').onclick=finishDay;$('btnFinish2').onclick=finishDay;
 $('btnBack').onclick=backToFocus;
 $('btnPip').onclick=togglePip;
+$('btnPause').onclick=togglePause;
 $('lenChips').onclick=e=>{const v=+e.target.dataset.v;if(v){S.focusLen=v;save();render()}};
 $('btnSound').onclick=()=>{S.sound=!S.sound;ensureAudio();save();render()};
 $('btnReset').onclick=()=>{const b=$('btnReset');if(b.dataset.confirm){S={xp:0,focusLen:10,sound:true,sessions:[],lastActive:null};R={mode:'idle'};save();b.dataset.confirm='';b.textContent='ล้างข้อมูล';currentMood=null;say('เริ่มต้นใหม่กัน!');render()}else{b.dataset.confirm='1';b.textContent='แตะอีกครั้งเพื่อยืนยัน';setTimeout(()=>{b.dataset.confirm='';b.textContent='ล้างข้อมูล'},3000)}};
@@ -414,7 +435,7 @@ document.addEventListener('visibilitychange',()=>{if(!document.hidden){tick();if
 if(R.mode==='focus'&&Date.now()>=R.end){endFocus(true)}
 else if(R.mode==='break'&&Date.now()>=R.end){breakOver()}
 else{ if(moodNow()==='sleepy')say(pick(MSG.sleepy)); render(); if(R.mode==='focus')say(pick(MSG.focus)); }
-if(R.mode==='focus'||R.mode==='break')preparePip();
+if(R.mode==='focus'||R.mode==='break'||R.mode==='flow')preparePip();
 setInterval(tick,250);
 })();
 </script>
